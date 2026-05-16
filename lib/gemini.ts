@@ -3,8 +3,8 @@ import { GoogleGenAI } from '@google/genai'
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! })
 
-// Nano Banana Pro → Gemini 3 Pro Image (best quality)
-const MODEL = 'gemini-3.0-pro-image-generation'
+// gemini-2.5-flash-image → supports face photo input + styled image output (FREE)
+const MODEL = 'gemini-2.5-flash-image'
 
 // ─── Core Generate Function ───────────────────────────────────────────────────
 
