@@ -25,6 +25,7 @@ Ensure the person perfectly matches the IDENTITY LOCK description above.`
       numberOfImages: 1,
       aspectRatio: '3:4', // Best for portraits
       outputMimeType: 'image/jpeg',
+      // @ts-ignore — SDK type mismatch, backend requires string or enum
       personGeneration: 'ALLOW_ALL' // Required for generating real people/faces
     },
   })
