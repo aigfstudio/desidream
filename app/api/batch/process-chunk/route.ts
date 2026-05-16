@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { getFaceImageAsBase64, markJobDone, markJobFailed, markJobProcessing } from '@/lib/supabase'
-import { generateWithRetry, detectMimeType } from '@/lib/gemini'
+import { detectMimeType } from '@/lib/gemini'
 import { uploadGeneratedImage } from '@/lib/cloudinary'
 
 // Process one job at a time — called repeatedly from the dashboard

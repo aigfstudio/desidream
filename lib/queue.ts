@@ -3,7 +3,7 @@
 // Processes jobs 5 at a time to respect Gemini rate limits
 
 import { supabaseAdmin, getFaceImageAsBase64, markJobProcessing, markJobDone, markJobFailed } from './supabase'
-import { generateWithRetry, detectMimeType } from './gemini'
+import { detectMimeType } from './gemini'
 import { uploadGeneratedImage } from './cloudinary'
 import type { GenerationJob } from '@/types'
 
@@ -95,11 +95,24 @@ async function processJob(job: GenerationJob & { face: any; prompt: any }, sessi
 
     const mimeType = detectMimeType(faceBase64)
 
-    // 2. Generate image with Gemini
+    // Stage 1: Identity
+    let identityDesc = job.face.identity_description
+    if (!identityDesc) {
+      const { extractFaceIdentity } = await import('./gemini')
+      identityDesc = await withTimeout(
+        extractFaceIdentity(faceBase64, mimeType),
+        JOB_TIMEOUT,
+        'Identity extraction timed out'
+      )
+      await supabaseAdmin.from('faces').update({ identity_description: identityDesc }).eq('id', job.face.id)
+    }
+
+    // Stage 2: Imagen
+    const { generateImagenWithRetry } = await import('./imagen')
     const generatedBase64 = await withTimeout(
-      generateWithRetry(faceBase64, mimeType, job.prompt.prompt_text, job.prompt.style_name),
+      generateImagenWithRetry(identityDesc, job.prompt.prompt_text, job.prompt.style_name),
       JOB_TIMEOUT,
-      'Gemini generation timed out'
+      'Imagen generation timed out'
     )
 
     // 3. Upload to Cloudinary

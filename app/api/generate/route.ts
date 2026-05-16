@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin, getFaceImageAsBase64, markJobProcessing, markJobDone, markJobFailed } from '@/lib/supabase'
-import { generateWithRetry, detectMimeType } from '@/lib/gemini'
+import { detectMimeType } from '@/lib/gemini'
 import { uploadGeneratedImage } from '@/lib/cloudinary'
 
 const JOB_TIMEOUT = 90_000 // 90 seconds per job
@@ -34,10 +34,18 @@ export async function POST(req: NextRequest) {
     const faceBase64 = await getFaceImageAsBase64(job.face.storage_url)
     const mimeType = detectMimeType(faceBase64)
 
-    // 2. Generate image with Gemini
-    const generatedBase64 = await generateWithRetry(
-      faceBase64,
-      mimeType,
+    // Stage 1: Identity
+    let identityDesc = job.face.identity_description
+    if (!identityDesc) {
+      const { extractFaceIdentity } = await import('@/lib/gemini')
+      identityDesc = await extractFaceIdentity(faceBase64, mimeType)
+      await supabaseAdmin.from('faces').update({ identity_description: identityDesc }).eq('id', job.face.id)
+    }
+
+    // Stage 2: Imagen
+    const { generateImagenWithRetry } = await import('@/lib/imagen')
+    const generatedBase64 = await generateImagenWithRetry(
+      identityDesc,
       job.prompt.prompt_text,
       job.prompt.style_name
     )
