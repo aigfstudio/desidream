@@ -102,20 +102,35 @@ export default function DashboardPage() {
 
   const handleStart = async (perFace?: number) => {
     setStarting(true)
-    const res = await fetch('/api/batch/start', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ imagesPerFace: perFace || imagesPerFace }),
-    })
-    const data = await res.json()
-    if (data.error) {
-      alert(data.error)
+    try {
+      const res = await fetch('/api/batch/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imagesPerFace: perFace || imagesPerFace }),
+      })
+      
+      let data;
+      const text = await res.text();
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        alert('Server returned an invalid response (might be a timeout): ' + text.substring(0, 100));
+        setStarting(false);
+        return;
+      }
+
+      if (data.error) {
+        alert('Error starting batch: ' + data.error)
+        setStarting(false)
+        return
+      }
+      await fetchStatus()
       setStarting(false)
-      return
+      runGenerationLoop()
+    } catch (err: any) {
+      alert('Network error: ' + err.message)
+      setStarting(false)
     }
-    await fetchStatus()
-    setStarting(false)
-    runGenerationLoop()
   }
 
   const handlePause = () => {

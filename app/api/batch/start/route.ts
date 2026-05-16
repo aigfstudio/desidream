@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
       .single()
 
     if (sessionErr || !session) {
-      return NextResponse.json({ error: 'Failed to create batch session' }, { status: 500 })
+      return NextResponse.json({ error: `Failed to create batch session: ${sessionErr?.message || 'Unknown error'}` }, { status: 500 })
     }
 
     // 5. Insert jobs with session ID in chunks
