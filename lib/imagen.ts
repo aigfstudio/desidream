@@ -25,7 +25,7 @@ Ensure the person perfectly matches the IDENTITY LOCK description above.`
       numberOfImages: 1,
       aspectRatio: '3:4', // Best for portraits
       outputMimeType: 'image/jpeg',
-      personGeneration: 'ALLOW_ADULT' // Required for generating real people/faces
+      personGeneration: 'ALLOW_ALL' // Required for generating real people/faces
     },
   })
 
