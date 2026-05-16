@@ -335,7 +335,7 @@ export default function DashboardPage() {
                   <div className="text-center text-green-400 font-semibold py-3">✅ All images generated!</div>
                 ) : null}
 
-                <button onClick={handleStart} disabled={starting}
+                <button onClick={() => handleStart()} disabled={starting}
                   className="w-full flex items-center justify-center gap-2 bg-zinc-700 hover:bg-zinc-600 text-white text-sm py-2.5 rounded-lg transition-colors">
                   <RefreshCw className="h-3.5 w-3.5" /> Start New Batch
                 </button>
