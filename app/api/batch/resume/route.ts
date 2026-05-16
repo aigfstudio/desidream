@@ -1,16 +1,13 @@
-// app/api/batch/pause/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { pauseWorker } from '@/lib/queue'
 
 export async function POST(req: NextRequest) {
   try {
-    pauseWorker()
-
+    const { resumeWorker } = await import('@/lib/queue')
     const { data: session } = await supabaseAdmin
       .from('batch_sessions')
       .select('id')
-      .eq('status', 'running')
+      .eq('status', 'paused')
       .order('started_at', { ascending: false })
       .limit(1)
       .single()
@@ -18,14 +15,14 @@ export async function POST(req: NextRequest) {
     if (session) {
       await supabaseAdmin
         .from('batch_sessions')
-        .update({ status: 'paused' })
+        .update({ status: 'running' })
         .eq('id', session.id)
+
+      resumeWorker()
     }
 
-    return NextResponse.json({ success: true, message: 'Batch paused' })
+    return NextResponse.json({ success: true, message: 'Batch resumed' })
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }
-
-
