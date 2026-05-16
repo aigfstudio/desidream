@@ -15,23 +15,27 @@ export default function DashboardPage() {
   const [generating, setGenerating] = useState(false)
   const [latestImages, setLatestImages] = useState<any[]>([])
   const [lastGenerated, setLastGenerated] = useState<string>('')
-  const [imagesPerFace, setImagesPerFace] = useState<number>(20)
+  const [imagesPerFace, setImagesPerFace] = useState<number>(3)
   const generatingRef = useRef(false)
 
-  // ─── Fetch Status ───────────────────────────────────────────────────────────
+  // ─── Fetch Status ────────────────────────────────────────────────────────────
   const fetchStatus = useCallback(async () => {
-    const res = await fetch('/api/batch/status')
-    const data = await res.json()
-    setStats(data.stats)
-    setSession(data.session)
-    return data
+    try {
+      const res = await fetch('/api/batch/status')
+      const data = await res.json()
+      setStats(data.stats)
+      setSession(data.session)
+      return data
+    } catch { return null }
   }, [])
 
   const fetchImages = useCallback(async () => {
-    const res = await fetch('/api/jobs')
-    const data = await res.json()
-    const done = (data.jobs || []).filter((j: any) => j.status === 'done' && j.cloudinary_url)
-    setLatestImages(done.slice(0, 12))
+    try {
+      const res = await fetch('/api/jobs')
+      const data = await res.json()
+      const done = (data.jobs || []).filter((j: any) => j.status === 'done' && j.cloudinary_url)
+      setLatestImages(done.slice(0, 12))
+    } catch { }
   }, [])
 
   useEffect(() => {
@@ -44,9 +48,7 @@ export default function DashboardPage() {
     return () => clearInterval(interval)
   }, [fetchStatus, fetchImages])
 
-  // ─── Generation Loop ────────────────────────────────────────────────────────
-  // This loop runs IN THE BROWSER — keeps calling /api/batch/process-chunk
-  // until all jobs are done or user pauses
+  // ─── Generation Loop ─────────────────────────────────────────────────────────
   const runGenerationLoop = useCallback(async () => {
     generatingRef.current = true
     setGenerating(true)
@@ -63,24 +65,22 @@ export default function DashboardPage() {
         }
 
         if (data.cloudinary_url) {
-          setLastGenerated(`✅ Generated: ${data.face} — ${data.style}`)
+          setLastGenerated(`✅ Uploaded to Cloudinary: ${data.face} — ${data.style}`)
         }
 
         await fetchStatus()
         await fetchImages()
-
-        // Small delay between jobs to avoid overwhelming API
-        await new Promise(r => setTimeout(r, 1000))
+        await new Promise(r => setTimeout(r, 800))
       } catch (err: any) {
         setLastGenerated(`❌ ${err.message}`)
-        await new Promise(r => setTimeout(r, 5000)) // wait 5s on error then retry
+        await new Promise(r => setTimeout(r, 5000))
       }
     }
 
     setGenerating(false)
   }, [fetchStatus, fetchImages])
 
-  // ─── Actions ────────────────────────────────────────────────────────────────
+  // ─── Actions ─────────────────────────────────────────────────────────────────
   const handleSeedPrompts = async () => {
     setSeeding(true)
     const res = await fetch('/api/prompts/seed', { method: 'POST' })
@@ -100,27 +100,23 @@ export default function DashboardPage() {
     setSyncing(false)
   }
 
-  const handleStart = async (perFace?: number) => {
+  const handleStart = async () => {
     setStarting(true)
     try {
       const res = await fetch('/api/batch/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imagesPerFace: perFace || imagesPerFace }),
+        body: JSON.stringify({ imagesPerFace }),
       })
-      
-      let data;
-      const text = await res.text();
-      try {
-        data = JSON.parse(text);
-      } catch (e) {
-        alert('Server returned an invalid response (might be a timeout): ' + text.substring(0, 100));
-        setStarting(false);
-        return;
+      const text = await res.text()
+      let data: any
+      try { data = JSON.parse(text) } catch {
+        alert('Server error: ' + text.substring(0, 150))
+        setStarting(false)
+        return
       }
-
       if (data.error) {
-        alert('Error starting batch: ' + data.error)
+        alert('Error: ' + data.error)
         setStarting(false)
         return
       }
@@ -165,10 +161,10 @@ export default function DashboardPage() {
     await fetchStatus()
   }
 
-  // ─── Derived State ──────────────────────────────────────────────────────────
+  // ─── Derived State ───────────────────────────────────────────────────────────
   const facesCount = stats?.facesCount || 0
   const promptsCount = stats?.promptsCount || 0
-  const totalExpected = facesCount * Math.min(promptsCount, imagesPerFace)
+  const totalImages = facesCount * imagesPerFace
   const isRunning = session?.status === 'running'
   const isPaused = session?.status === 'paused'
   const isCompleted = session?.status === 'completed'
@@ -178,6 +174,7 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-[#080808] text-white p-6 max-w-5xl mx-auto space-y-6">
+
       {/* Header */}
       <div className="flex items-center justify-between py-4 border-b border-zinc-800">
         <div>
@@ -191,14 +188,15 @@ export default function DashboardPage() {
           <span className={`text-xs px-3 py-1.5 rounded-full border ${promptsCount > 0 ? 'bg-green-950 border-green-800 text-green-400' : 'bg-zinc-900 border-zinc-800 text-zinc-500'}`}>
             {promptsCount} prompts
           </span>
-          <span className={`text-xs px-3 py-1.5 rounded-full border ${totalExpected > 0 ? 'bg-green-950 border-green-800 text-green-400' : 'bg-zinc-900 border-zinc-800 text-zinc-500'}`}>
-            {totalExpected} images
+          <span className={`text-xs px-3 py-1.5 rounded-full border ${totalImages > 0 ? 'bg-green-950 border-green-800 text-green-400' : 'bg-zinc-900 border-zinc-800 text-zinc-500'}`}>
+            {totalImages} images queued
           </span>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* LEFT: 3 Steps */}
+
+        {/* ── LEFT COLUMN ─────────────────────────────────────────────────────── */}
         <div className="space-y-4">
 
           {/* Step 1: Load Prompts */}
@@ -215,7 +213,7 @@ export default function DashboardPage() {
                 <p className="text-zinc-500 text-xs ml-6">
                   {promptsCount > 0
                     ? `✅ ${promptsCount} prompts ready in Supabase`
-                    : '100 Indian GF outfits × 20 poses → all auto-loaded'
+                    : '100 Indian GF outfits × poses → auto-loaded'
                   }
                 </p>
               </div>
@@ -229,7 +227,7 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Step 2: Faces */}
+          {/* Step 2: Face Photos */}
           <div className={`bg-zinc-900 border rounded-xl p-5 ${facesCount > 0 ? 'border-green-800' : 'border-zinc-800'}`}>
             <div className="flex items-center gap-2 mb-1">
               {facesCount > 0
@@ -242,14 +240,13 @@ export default function DashboardPage() {
               {facesCount > 0 ? `✅ ${facesCount} faces registered` : 'Upload or sync from Supabase bucket'}
             </p>
 
-            {/* Upload Zone */}
+            {/* Drag & Drop Upload Zone */}
             <div
               onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFiles(e.dataTransfer.files) }}
               onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
               onDragLeave={() => setDragOver(false)}
               onClick={() => document.getElementById('faceInput')?.click()}
-              className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-all
-                ${dragOver ? 'border-green-500 bg-green-950/20' : 'border-zinc-700 hover:border-zinc-500'}`}
+              className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-all ${dragOver ? 'border-green-500 bg-green-950/20' : 'border-zinc-700 hover:border-zinc-500'}`}
             >
               <input id="faceInput" type="file" multiple accept="image/*" className="hidden"
                 onChange={(e) => e.target.files && handleFiles(e.target.files)} />
@@ -262,7 +259,7 @@ export default function DashboardPage() {
               }
             </div>
 
-            {/* Sync Button */}
+            {/* Sync from Supabase */}
             <button
               onClick={handleSyncFromBucket}
               disabled={syncing}
@@ -274,7 +271,7 @@ export default function DashboardPage() {
             {uploadMsg && !uploading && <p className="text-xs mt-2 text-center text-green-400">{uploadMsg}</p>}
           </div>
 
-          {/* Step 3: Generate */}
+          {/* Step 3: Generate Images */}
           <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
             <div className="flex items-center gap-2 mb-1">
               {isCompleted
@@ -284,83 +281,112 @@ export default function DashboardPage() {
               <span className="font-semibold text-sm">Generate Images</span>
             </div>
             <p className="text-zinc-500 text-xs mb-4 ml-6">
-              {totalExpected > 0
-                ? `${facesCount} faces × ${promptsCount} outfits = ${totalExpected} images`
-                : 'Complete steps 1 & 2 first'
-              }
+              Use the slider to pick images per face, then hit Generate
             </p>
 
-            {generating && lastGenerated && (
-              <div className="mb-3 text-xs text-green-400 bg-green-950/30 border border-green-900 rounded-lg px-3 py-2 flex items-center gap-2">
-                <Zap className="h-3 w-3 animate-pulse flex-shrink-0" />
+            {/* Live status ticker */}
+            {lastGenerated && (
+              <div className={`mb-3 text-xs rounded-lg px-3 py-2 flex items-center gap-2 ${generating ? 'text-green-400 bg-green-950/30 border border-green-900' : 'text-zinc-400 bg-zinc-800 border border-zinc-700'}`}>
+                {generating && <Zap className="h-3 w-3 animate-pulse flex-shrink-0" />}
                 {lastGenerated}
               </div>
             )}
 
-            {!session ? (
-              <div className="space-y-4">
-                <div className="bg-zinc-800 rounded-lg p-4">
-                  <div className="flex justify-between items-center mb-3">
-                    <label className="text-sm font-medium text-zinc-300">Images to generate per face:</label>
-                    <input
-                      type="number"
-                      min="1"
-                      max={promptsCount || 100}
-                      value={imagesPerFace}
-                      onChange={(e) => setImagesPerFace(Number(e.target.value) || 1)}
-                      className="w-20 bg-zinc-900 border border-zinc-700 rounded-md px-3 py-1.5 text-sm text-center focus:outline-none focus:border-green-500"
-                    />
-                  </div>
+            {/* ── Slider — ALWAYS visible ────────────────────────────── */}
+            <div className="bg-zinc-800 rounded-xl p-4 mb-4">
+              <div className="flex justify-between items-center mb-3">
+                <label className="text-sm font-semibold text-zinc-200">Images per face</label>
+                <div className="flex items-center gap-2">
                   <input
-                    type="range"
-                    min="1"
+                    type="number"
+                    min={1}
                     max={promptsCount || 100}
                     value={imagesPerFace}
-                    onChange={(e) => setImagesPerFace(Number(e.target.value) || 1)}
-                    className="w-full h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-green-500"
+                    onChange={(e) => setImagesPerFace(Math.min(promptsCount || 100, Math.max(1, Number(e.target.value) || 1)))}
+                    className="w-16 bg-zinc-900 border border-zinc-600 rounded-md px-2 py-1 text-sm text-center text-white focus:outline-none focus:border-green-500"
                   />
-                  <div className="flex justify-between text-xs text-zinc-500 mt-2">
-                    <span>1</span>
-                    <span>Max ({promptsCount || 100})</span>
-                  </div>
                 </div>
+              </div>
+              <input
+                type="range"
+                min={1}
+                max={promptsCount || 100}
+                value={imagesPerFace}
+                onChange={(e) => setImagesPerFace(Number(e.target.value))}
+                className="w-full h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-green-500"
+              />
+              <div className="flex justify-between text-xs mt-2">
+                <span className="text-zinc-500">1</span>
+                <span className="font-bold">
+                  <span className="text-green-400">{facesCount} faces</span>
+                  <span className="text-zinc-500"> × </span>
+                  <span className="text-green-400">{imagesPerFace}</span>
+                  <span className="text-zinc-500"> = </span>
+                  <span className="text-white">{totalImages} images</span>
+                </span>
+                <span className="text-zinc-500">Max {promptsCount || 100}</span>
+              </div>
+            </div>
 
+            {/* ── Action buttons — based on current state ────────────── */}
+            <div className="space-y-2">
+
+              {/* No session OR completed → show green START */}
+              {(!session || isCompleted) && (
                 <button
-                  onClick={() => handleStart()}
+                  id="btn-generate"
+                  onClick={handleStart}
                   disabled={starting || !facesCount || !promptsCount}
-                  className="w-full flex items-center justify-center gap-2 bg-green-600 hover:bg-green-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white font-semibold py-3 rounded-lg transition-colors shadow-lg shadow-green-900/20"
+                  className="w-full flex items-center justify-center gap-2 bg-green-600 hover:bg-green-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white font-bold py-3 rounded-xl transition-colors shadow-lg shadow-green-900/20 text-sm"
                 >
                   <Play className="h-4 w-4" />
-                  {starting ? 'Starting...' : `▶ Generate ${totalExpected} Images`}
+                  {starting ? 'Starting...' : `▶ Generate ${totalImages} Images`}
                 </button>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {(isRunning || generating) ? (
-                  <button onClick={handlePause}
-                    className="w-full flex items-center justify-center gap-2 bg-yellow-600 hover:bg-yellow-500 text-white font-semibold py-3 rounded-lg transition-colors">
-                    <Pause className="h-4 w-4" /> Pause Generation
-                  </button>
-                ) : isPaused ? (
-                  <button onClick={handleResume}
-                    className="w-full flex items-center justify-center gap-2 bg-green-600 hover:bg-green-500 text-white font-semibold py-3 rounded-lg transition-colors">
-                    <Play className="h-4 w-4" /> Resume Generation
-                  </button>
-                ) : isCompleted ? (
-                  <div className="text-center text-green-400 font-semibold py-3">✅ All images generated!</div>
-                ) : null}
+              )}
 
-                <button onClick={() => handleStart()} disabled={starting}
-                  className="w-full flex items-center justify-center gap-2 bg-zinc-700 hover:bg-zinc-600 text-white text-sm py-2.5 rounded-lg transition-colors">
-                  <RefreshCw className="h-3.5 w-3.5" /> Start New Batch
+              {/* Running or generating → show STOP */}
+              {(isRunning || generating) && !isCompleted && (
+                <button
+                  id="btn-stop"
+                  onClick={handlePause}
+                  className="w-full flex items-center justify-center gap-2 bg-yellow-600 hover:bg-yellow-500 text-white font-bold py-3 rounded-xl transition-colors text-sm"
+                >
+                  <Pause className="h-4 w-4" /> ⏸ Stop Generation
                 </button>
-              </div>
-            )}
+              )}
+
+              {/* Paused → show RESUME */}
+              {isPaused && !generating && (
+                <button
+                  id="btn-resume"
+                  onClick={handleResume}
+                  className="w-full flex items-center justify-center gap-2 bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded-xl transition-colors text-sm"
+                >
+                  <Play className="h-4 w-4" /> ▶ Resume Generation
+                </button>
+              )}
+
+              {/* New Batch — visible whenever a session exists */}
+              {session && (
+                <button
+                  id="btn-new-batch"
+                  onClick={handleStart}
+                  disabled={starting || generating}
+                  className="w-full flex items-center justify-center gap-2 bg-zinc-700 hover:bg-zinc-600 disabled:opacity-40 text-white text-sm font-semibold py-2.5 rounded-xl transition-colors border border-zinc-600"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  {starting ? 'Starting...' : `🔄 New Batch — ${totalImages} images`}
+                </button>
+              )}
+
+            </div>
           </div>
         </div>
 
-        {/* RIGHT: Live Progress */}
+        {/* ── RIGHT COLUMN ────────────────────────────────────────────────────── */}
         <div className="space-y-4">
+
+          {/* Live Progress */}
           <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
             <h2 className="font-semibold text-sm mb-4">Live Progress</h2>
 
@@ -368,22 +394,18 @@ export default function DashboardPage() {
               <div className="text-center py-10 text-zinc-600">
                 <Clock className="h-10 w-10 mx-auto mb-3 opacity-30" />
                 <div className="text-sm">Waiting to start...</div>
-                <div className="text-xs mt-1 text-zinc-700">Complete the 3 steps on the left</div>
+                <div className="text-xs mt-1 text-zinc-700">Set your slider and click Generate</div>
               </div>
             ) : (
               <div className="space-y-5">
                 <div className="flex items-center justify-between">
-                  <span className={`text-xs font-semibold px-3 py-1 rounded-full
-                    ${generating ? 'bg-green-950 text-green-400 border border-green-800 animate-pulse' : ''}
-                    ${isPaused ? 'bg-yellow-950 text-yellow-400 border border-yellow-800' : ''}
-                    ${isCompleted ? 'bg-blue-950 text-blue-400 border border-blue-800' : ''}
-                    ${!generating && isRunning ? 'bg-zinc-800 text-zinc-400 border border-zinc-700' : ''}
-                  `}>
+                  <span className={`text-xs font-semibold px-3 py-1 rounded-full border ${generating ? 'bg-green-950 text-green-400 border-green-800 animate-pulse' : isPaused ? 'bg-yellow-950 text-yellow-400 border-yellow-800' : isCompleted ? 'bg-blue-950 text-blue-400 border-blue-800' : 'bg-zinc-800 text-zinc-400 border-zinc-700'}`}>
                     {generating ? '⚡ Generating...' : isPaused ? '⏸ Paused' : isCompleted ? '✅ Complete' : '⏳ Ready'}
                   </span>
                   <span className="text-zinc-300 text-lg font-bold font-mono">{progressPct}%</span>
                 </div>
 
+                {/* Progress bar */}
                 <div>
                   <div className="h-4 bg-zinc-800 rounded-full overflow-hidden">
                     <div
@@ -398,6 +420,7 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
+                {/* Stats grid */}
                 <div className="grid grid-cols-3 gap-2">
                   <div className="bg-zinc-800 rounded-lg p-3 text-center">
                     <div className="text-green-400 font-bold text-xl">{session.completed_jobs}</div>
@@ -420,7 +443,7 @@ export default function DashboardPage() {
             )}
           </div>
 
-          {/* Latest Generated Images */}
+          {/* Generated Images */}
           <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
             <div className="flex items-center justify-between mb-3">
               <h2 className="font-semibold text-sm">Generated Images</h2>
@@ -441,6 +464,7 @@ export default function DashboardPage() {
               </div>
             )}
           </div>
+
         </div>
       </div>
     </div>
