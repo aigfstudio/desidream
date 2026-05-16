@@ -23,23 +23,23 @@ export async function uploadFaceToStorage(
   const path = `faces/${label}-${Date.now()}.${ext}`
 
   const { error } = await supabaseAdmin.storage
-    .from('faces')
+    .from('aigf')
     .upload(path, file, { contentType: file.type, upsert: false })
 
   if (error) throw new Error(`Storage upload failed: ${error.message}`)
 
-  const { data } = supabaseAdmin.storage.from('faces').getPublicUrl(path)
+  const { data } = supabaseAdmin.storage.from('aigf').getPublicUrl(path)
   return data.publicUrl
 }
 
 export async function getFaceImageAsBase64(storageUrl: string): Promise<string> {
   // Extract path from the public URL
   const url = new URL(storageUrl)
-  const pathParts = url.pathname.split('/storage/v1/object/public/faces/')
+  const pathParts = url.pathname.split('/storage/v1/object/public/aigf/')
   const filePath = pathParts[1]
 
   const { data, error } = await supabaseAdmin.storage
-    .from('faces')
+    .from('aigf')
     .download(filePath)
 
   if (error || !data) throw new Error(`Failed to download face: ${error?.message}`)

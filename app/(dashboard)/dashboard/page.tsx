@@ -28,6 +28,7 @@ export default function DashboardPage() {
   const [stats, setStats] = useState<BatchStats | null>(null)
   const [session, setSession] = useState<Session>(null)
   const [uploading, setUploading] = useState(false)
+  const [syncing, setSyncing] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const [uploadMsg, setUploadMsg] = useState('')
   const [starting, setStarting] = useState(false)
@@ -68,6 +69,20 @@ export default function DashboardPage() {
       await fetchStatus()
     }
     setSeeding(false)
+  }
+
+  const handleSyncFromBucket = async () => {
+    setSyncing(true)
+    setUploadMsg('Syncing faces from Supabase bucket...')
+    const res = await fetch('/api/faces/sync', { method: 'POST' })
+    const data = await res.json()
+    if (data.error) {
+      setUploadMsg(`❌ ${data.error}`)
+    } else {
+      setUploadMsg(`✅ ${data.message}`)
+      await fetchStatus()
+    }
+    setSyncing(false)
   }
 
   const handleFiles = async (files: FileList | File[]) => {
@@ -161,6 +176,21 @@ export default function DashboardPage() {
                   }
                 </p>
               </div>
+
+            {/* OR sync from bucket */}
+            <div className="mt-3 flex items-center gap-3">
+              <div className="flex-1 h-px bg-zinc-800"></div>
+              <span className="text-zinc-600 text-xs">or</span>
+              <div className="flex-1 h-px bg-zinc-800"></div>
+            </div>
+            <button
+              onClick={handleSyncFromBucket}
+              disabled={syncing}
+              className="mt-3 w-full flex items-center justify-center gap-2 border border-zinc-700 hover:border-green-600 text-zinc-400 hover:text-green-400 text-xs font-semibold py-2.5 rounded-lg transition-colors"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${syncing ? 'animate-spin' : ''}`} />
+              {syncing ? 'Syncing...' : '↑ Sync faces from Supabase aigf bucket'}
+            </button>
               <button
                 onClick={handleSeedPrompts}
                 disabled={seeding || (stats?.promptsCount || 0) > 0}
