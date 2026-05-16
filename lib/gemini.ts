@@ -3,6 +3,12 @@ import { GoogleGenAI } from '@google/genai'
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! })
 
+// Available image generation models (in order of preference):
+// "Nano Banana Pro"  → gemini-3.0-pro-image-generation       (Gemini 3 Pro Image)
+// "Nano Banana 2"    → gemini-3.1-flash-image-generation      (Gemini 3.1 Flash Image)
+// "Nano Banana"      → gemini-2.5-flash-preview-image-generation (Gemini 2.5 Flash Preview Image)
+const MODEL = 'gemini-2.5-flash-preview-image-generation'
+
 // ─── Core Generate Function ───────────────────────────────────────────────────
 
 export async function generateImageWithFace(
@@ -23,7 +29,7 @@ CRITICAL RULES:
 Generate image: ${promptText}. Preserve this person's exact facial features.`
 
   const response = await ai.models.generateContent({
-    model: 'gemini-2.0-flash-preview-image-generation',
+    model: MODEL,
     contents: [
       {
         role: 'user',
