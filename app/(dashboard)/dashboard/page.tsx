@@ -15,6 +15,7 @@ export default function DashboardPage() {
   const [generating, setGenerating] = useState(false)
   const [latestImages, setLatestImages] = useState<any[]>([])
   const [lastGenerated, setLastGenerated] = useState<string>('')
+  const [imagesPerFace, setImagesPerFace] = useState<number>(20)
   const generatingRef = useRef(false)
 
   // ─── Fetch Status ───────────────────────────────────────────────────────────
@@ -99,9 +100,13 @@ export default function DashboardPage() {
     setSyncing(false)
   }
 
-  const handleStart = async () => {
+  const handleStart = async (perFace?: number) => {
     setStarting(true)
-    const res = await fetch('/api/batch/start', { method: 'POST' })
+    const res = await fetch('/api/batch/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imagesPerFace: perFace || imagesPerFace }),
+    })
     const data = await res.json()
     if (data.error) {
       alert(data.error)
@@ -110,7 +115,7 @@ export default function DashboardPage() {
     }
     await fetchStatus()
     setStarting(false)
-    runGenerationLoop() // Start the browser-driven loop
+    runGenerationLoop()
   }
 
   const handlePause = () => {
@@ -148,7 +153,7 @@ export default function DashboardPage() {
   // ─── Derived State ──────────────────────────────────────────────────────────
   const facesCount = stats?.facesCount || 0
   const promptsCount = stats?.promptsCount || 0
-  const totalExpected = facesCount * promptsCount
+  const totalExpected = facesCount * Math.min(promptsCount, imagesPerFace)
   const isRunning = session?.status === 'running'
   const isPaused = session?.status === 'paused'
   const isCompleted = session?.status === 'completed'
@@ -278,14 +283,42 @@ export default function DashboardPage() {
             )}
 
             {!session ? (
-              <button
-                onClick={handleStart}
-                disabled={starting || !facesCount || !promptsCount}
-                className="w-full flex items-center justify-center gap-2 bg-green-600 hover:bg-green-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white font-semibold py-3 rounded-lg transition-colors"
-              >
-                <Play className="h-4 w-4" />
-                {starting ? 'Starting...' : facesCount && promptsCount ? `▶ Start — Generate ${totalExpected} Images` : 'Complete steps above first'}
-              </button>
+              <div className="space-y-4">
+                <div className="bg-zinc-800 rounded-lg p-4">
+                  <div className="flex justify-between items-center mb-3">
+                    <label className="text-sm font-medium text-zinc-300">Images to generate per face:</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max={promptsCount || 100}
+                      value={imagesPerFace}
+                      onChange={(e) => setImagesPerFace(Number(e.target.value) || 1)}
+                      className="w-20 bg-zinc-900 border border-zinc-700 rounded-md px-3 py-1.5 text-sm text-center focus:outline-none focus:border-green-500"
+                    />
+                  </div>
+                  <input
+                    type="range"
+                    min="1"
+                    max={promptsCount || 100}
+                    value={imagesPerFace}
+                    onChange={(e) => setImagesPerFace(Number(e.target.value) || 1)}
+                    className="w-full h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-green-500"
+                  />
+                  <div className="flex justify-between text-xs text-zinc-500 mt-2">
+                    <span>1</span>
+                    <span>Max ({promptsCount || 100})</span>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => handleStart()}
+                  disabled={starting || !facesCount || !promptsCount}
+                  className="w-full flex items-center justify-center gap-2 bg-green-600 hover:bg-green-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white font-semibold py-3 rounded-lg transition-colors shadow-lg shadow-green-900/20"
+                >
+                  <Play className="h-4 w-4" />
+                  {starting ? 'Starting...' : `▶ Generate ${totalExpected} Images`}
+                </button>
+              </div>
             ) : (
               <div className="space-y-2">
                 {(isRunning || generating) ? (

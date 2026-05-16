@@ -1,10 +1,13 @@
 // app/api/batch/start/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { startWorker } from '@/lib/queue'
 
 export async function POST(req: NextRequest) {
   try {
+    // Support optional imagesPerFace
+    const body = await req.json().catch(() => ({}))
+    const imagesPerFace: number = body.imagesPerFace || 20
+
     // 1. Fetch all faces
     const { data: faces, error: facesErr } = await supabaseAdmin
       .from('faces')
@@ -25,8 +28,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No prompts found. Add prompts first.' }, { status: 400 })
     }
 
-    // 3. Create batch session
-    const totalJobs = faces.length * prompts.length
+    // 3. Build job combinations based on imagesPerFace
+    const jobs = []
+    for (const face of faces) {
+      // Pick first N prompts for this face
+      const facePrompts = prompts.slice(0, imagesPerFace)
+      for (const prompt of facePrompts) {
+        jobs.push({
+          face_id: face.id,
+          prompt_id: prompt.id,
+          status: 'queued',
+        })
+      }
+    }
+
+    const totalJobs = jobs.length
+
+    // 4. Create batch session with actual job count
     const { data: session, error: sessionErr } = await supabaseAdmin
       .from('batch_sessions')
       .insert({
@@ -42,52 +60,31 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Failed to create batch session' }, { status: 500 })
     }
 
-    // 4. Create all generation_jobs in bulk
-    // Batch insert in chunks of 500 to avoid payload limits
-    const jobs = []
-    for (const face of faces) {
-      for (const prompt of prompts) {
-        jobs.push({
-          face_id: face.id,
-          prompt_id: prompt.id,
-          batch_session_id: session.id,
-          status: 'queued',
-        })
-      }
-    }
-
+    // 5. Insert jobs with session ID in chunks
+    const jobsWithSession = jobs.map(j => ({ ...j, batch_session_id: session.id }))
     const CHUNK_SIZE = 500
-    for (let i = 0; i < jobs.length; i += CHUNK_SIZE) {
-      const chunk = jobs.slice(i, i + CHUNK_SIZE)
+    for (let i = 0; i < jobsWithSession.length; i += CHUNK_SIZE) {
+      const chunk = jobsWithSession.slice(i, i + CHUNK_SIZE)
       const { error: insertErr } = await supabaseAdmin
         .from('generation_jobs')
         .insert(chunk)
 
       if (insertErr) {
-        console.error(`[Batch] Failed to insert chunk ${i}:`, insertErr)
-        return NextResponse.json(
-          { error: `Job creation failed at chunk ${i}: ${insertErr.message}` },
-          { status: 500 }
-        )
+        return NextResponse.json({ error: `Job creation failed: ${insertErr.message}` }, { status: 500 })
       }
     }
 
-    // 5. Update face statuses to 'processing'
+    // 6. Update face statuses
     await supabaseAdmin
       .from('faces')
       .update({ status: 'processing' })
-      .in('id', faces.map((f) => f.id))
-
-    // 6. Start the worker
-    startWorker(session.id)
+      .in('id', faces.map(f => f.id))
 
     return NextResponse.json({
       success: true,
       session_id: session.id,
       total_jobs: totalJobs,
-      faces: faces.length,
-      prompts: prompts.length,
-      message: `Started generating ${totalJobs} images (${faces.length} faces × ${prompts.length} prompts)`,
+      message: `Started generating ${totalJobs} images (${faces.length} faces × ${imagesPerFace} outfits)`,
     })
   } catch (err: any) {
     console.error('[Batch Start]', err)
