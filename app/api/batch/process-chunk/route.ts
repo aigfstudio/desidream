@@ -25,7 +25,7 @@ export async function POST() {
       .from('generation_jobs')
       .select(`
         *,
-        face:faces(id, label, storage_url),
+        face:faces(id, label, storage_url, identity_description),
         prompt:prompts(id, style_name, pose_name, prompt_text)
       `)
       .eq('batch_session_id', session.id)
@@ -61,10 +61,26 @@ export async function POST() {
     const faceBase64 = await getFaceImageAsBase64(job.face.storage_url)
     const mimeType = detectMimeType(faceBase64)
 
-    // 2. Generate image with Gemini
-    const generatedBase64 = await generateWithRetry(
-      faceBase64,
-      mimeType,
+    // Stage 1: Face Identity Extraction (Cache in DB)
+    let identityDesc = job.face.identity_description
+    if (!identityDesc) {
+      console.log(`[Stage 1] Extracting identity for face: ${job.face.label}`)
+      // Import extractFaceIdentity dynamically or at top
+      const { extractFaceIdentity } = await import('@/lib/gemini')
+      identityDesc = await extractFaceIdentity(faceBase64, mimeType)
+
+      // Save to Supabase so we never analyze this face again
+      await supabaseAdmin
+        .from('faces')
+        .update({ identity_description: identityDesc })
+        .eq('id', job.face.id)
+    }
+
+    // Stage 2: Image Generation via Imagen
+    console.log(`[Stage 2] Generating Imagen for: ${job.prompt.prompt_text}`)
+    const { generateImagenWithRetry } = await import('@/lib/imagen')
+    const generatedBase64 = await generateImagenWithRetry(
+      identityDesc,
       job.prompt.prompt_text,
       job.prompt.style_name
     )
