@@ -61,29 +61,40 @@ export async function POST() {
     const faceBase64 = await getFaceImageAsBase64(job.face.storage_url)
     const mimeType = detectMimeType(faceBase64)
 
-    // Stage 1: Face Identity Extraction (Cache in DB)
-    let identityDesc = job.face.identity_description
-    if (!identityDesc) {
-      console.log(`[Stage 1] Extracting identity for face: ${job.face.label}`)
-      // Import extractFaceIdentity dynamically or at top
-      const { extractFaceIdentity } = await import('@/lib/gemini')
-      identityDesc = await extractFaceIdentity(faceBase64, mimeType)
+    let generatedBase64 = ''
 
-      // Save to Supabase so we never analyze this face again
-      await supabaseAdmin
-        .from('faces')
-        .update({ identity_description: identityDesc })
-        .eq('id', job.face.id)
+    if (session.model === 'gemini') {
+      // 1-Stage Generation: Gemini 2.5 Flash Image
+      console.log(`[Stage 2] Generating with Gemini for: ${job.prompt.prompt_text}`)
+      const { generateWithRetry } = await import('@/lib/gemini')
+      generatedBase64 = await generateWithRetry(
+        faceBase64,
+        mimeType,
+        job.prompt.prompt_text,
+        job.prompt.style_name
+      )
+    } else {
+      // 2-Stage Generation: Identity + Imagen
+      let identityDesc = job.face.identity_description
+      if (!identityDesc) {
+        console.log(`[Stage 1] Extracting identity for face: ${job.face.label}`)
+        const { extractFaceIdentity } = await import('@/lib/gemini')
+        identityDesc = await extractFaceIdentity(faceBase64, mimeType)
+
+        await supabaseAdmin
+          .from('faces')
+          .update({ identity_description: identityDesc })
+          .eq('id', job.face.id)
+      }
+
+      console.log(`[Stage 2] Generating with Imagen for: ${job.prompt.prompt_text}`)
+      const { generateImagenWithRetry } = await import('@/lib/imagen')
+      generatedBase64 = await generateImagenWithRetry(
+        identityDesc,
+        job.prompt.prompt_text,
+        job.prompt.style_name
+      )
     }
-
-    // Stage 2: Image Generation via Imagen
-    console.log(`[Stage 2] Generating Imagen for: ${job.prompt.prompt_text}`)
-    const { generateImagenWithRetry } = await import('@/lib/imagen')
-    const generatedBase64 = await generateImagenWithRetry(
-      identityDesc,
-      job.prompt.prompt_text,
-      job.prompt.style_name
-    )
 
     // 3. Upload to Cloudinary
     const { secure_url, public_id } = await uploadGeneratedImage(

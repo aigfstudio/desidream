@@ -1,24 +1,37 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Upload, Play, Pause, RefreshCw, ImageIcon, CheckCircle, Clock, Zap } from 'lucide-react'
+import { Upload, Play, Pause, RefreshCw, ImageIcon, CheckCircle, Clock, Zap, Settings2, Image as ImageIcon2, FileText, CheckSquare, Square, Wand2 } from 'lucide-react'
 
 export default function DashboardPage() {
+  // Session & Polling State
   const [stats, setStats] = useState<any>(null)
   const [session, setSession] = useState<any>(null)
+  const [latestImages, setLatestImages] = useState<any[]>([])
+  const [lastGenerated, setLastGenerated] = useState<string>('')
+  
+  // Data State
+  const [allFaces, setAllFaces] = useState<any[]>([])
+  const [allPrompts, setAllPrompts] = useState<any[]>([])
+  
+  // Form State
+  const [selectedFaceIds, setSelectedFaceIds] = useState<Set<string>>(new Set())
+  const [promptMode, setPromptMode] = useState<'library' | 'custom' | 'random'>('random')
+  const [selectedPromptIds, setSelectedPromptIds] = useState<Set<string>>(new Set())
+  const [customPrompt, setCustomPrompt] = useState('')
+  const [imagesPerFace, setImagesPerFace] = useState<number>(3)
+  const [model, setModel] = useState<'imagen' | 'gemini'>('imagen')
+
+  // UI State
   const [uploading, setUploading] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const [uploadMsg, setUploadMsg] = useState('')
   const [starting, setStarting] = useState(false)
-  const [seeding, setSeeding] = useState(false)
   const [generating, setGenerating] = useState(false)
-  const [latestImages, setLatestImages] = useState<any[]>([])
-  const [lastGenerated, setLastGenerated] = useState<string>('')
-  const [imagesPerFace, setImagesPerFace] = useState<number>(3)
   const generatingRef = useRef(false)
 
-  // ─── Fetch Status ────────────────────────────────────────────────────────────
+  // ─── Fetch Data & Status ───────────────────────────────────────────────────
   const fetchStatus = useCallback(async () => {
     try {
       const res = await fetch('/api/batch/status')
@@ -38,7 +51,23 @@ export default function DashboardPage() {
     } catch { }
   }, [])
 
+  const fetchData = useCallback(async () => {
+    try {
+      const [facesRes, promptsRes] = await Promise.all([
+        fetch('/api/faces'),
+        fetch('/api/prompts')
+      ])
+      const facesData = await facesRes.json()
+      const promptsData = await promptsRes.json()
+      if (facesData.faces) setAllFaces(facesData.faces)
+      if (promptsData.prompts) setAllPrompts(promptsData.prompts)
+    } catch (err) {
+      console.error('Failed to load data', err)
+    }
+  }, [])
+
   useEffect(() => {
+    fetchData()
     fetchStatus()
     fetchImages()
     const interval = setInterval(() => {
@@ -46,7 +75,7 @@ export default function DashboardPage() {
       fetchImages()
     }, 5000)
     return () => clearInterval(interval)
-  }, [fetchStatus, fetchImages])
+  }, [fetchStatus, fetchImages, fetchData])
 
   // ─── Generation Loop ─────────────────────────────────────────────────────────
   const runGenerationLoop = useCallback(async () => {
@@ -81,45 +110,36 @@ export default function DashboardPage() {
   }, [fetchStatus, fetchImages])
 
   // ─── Actions ─────────────────────────────────────────────────────────────────
-  const handleSeedPrompts = async () => {
-    setSeeding(true)
-    const res = await fetch('/api/prompts/seed', { method: 'POST' })
-    const data = await res.json()
-    if (data.success) await fetchStatus()
-    else alert('Failed to load prompts: ' + data.error)
-    setSeeding(false)
-  }
-
-  const handleSyncFromBucket = async () => {
-    setSyncing(true)
-    setUploadMsg('Syncing from Supabase...')
-    const res = await fetch('/api/faces/sync', { method: 'POST' })
-    const data = await res.json()
-    setUploadMsg(data.error ? `❌ ${data.error}` : `✅ ${data.message}`)
-    await fetchStatus()
-    setSyncing(false)
-  }
-
   const handleStart = async () => {
+    if (selectedFaceIds.size === 0) return alert('Please select at least one face.')
+    if (promptMode === 'library' && selectedPromptIds.size === 0) return alert('Please select at least one prompt from the library.')
+    if (promptMode === 'custom' && !customPrompt.trim()) return alert('Please write a custom prompt.')
+    if (promptMode === 'random' && allPrompts.length === 0) return alert('Prompt library is empty. Please add prompts first.')
+
     setStarting(true)
     try {
+      const payload = {
+        faceIds: Array.from(selectedFaceIds),
+        promptMode,
+        promptIds: Array.from(selectedPromptIds),
+        customPrompt,
+        imagesPerFace,
+        model
+      }
+
       const res = await fetch('/api/batch/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imagesPerFace }),
+        body: JSON.stringify(payload),
       })
-      const text = await res.text()
-      let data: any
-      try { data = JSON.parse(text) } catch {
-        alert('Server error: ' + text.substring(0, 150))
-        setStarting(false)
-        return
-      }
+      const data = await res.json()
+
       if (data.error) {
         alert('Error: ' + data.error)
         setStarting(false)
         return
       }
+      
       await fetchStatus()
       setStarting(false)
       runGenerationLoop()
@@ -158,13 +178,49 @@ export default function DashboardPage() {
     }
     setUploadMsg(`✅ ${uploaded} faces uploaded!`)
     setUploading(false)
+    await fetchData()
     await fetchStatus()
   }
 
+  const handleSyncFromBucket = async () => {
+    setSyncing(true)
+    setUploadMsg('Syncing from Supabase...')
+    const res = await fetch('/api/faces/sync', { method: 'POST' })
+    const data = await res.json()
+    setUploadMsg(data.error ? `❌ ${data.error}` : `✅ ${data.message}`)
+    await fetchData()
+    await fetchStatus()
+    setSyncing(false)
+  }
+
+  // Toggle Selection Helpers
+  const toggleFace = (id: string) => {
+    const next = new Set(selectedFaceIds)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    setSelectedFaceIds(next)
+  }
+
+  const toggleAllFaces = () => {
+    if (selectedFaceIds.size === allFaces.length) setSelectedFaceIds(new Set())
+    else setSelectedFaceIds(new Set(allFaces.map(f => f.id)))
+  }
+
+  const togglePrompt = (id: string) => {
+    const next = new Set(selectedPromptIds)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    setSelectedPromptIds(next)
+  }
+
   // ─── Derived State ───────────────────────────────────────────────────────────
-  const facesCount = stats?.facesCount || 0
-  const promptsCount = stats?.promptsCount || 0
-  const totalImages = facesCount * imagesPerFace
+  let calculatedTotalImages = 0
+  if (promptMode === 'library') {
+    calculatedTotalImages = selectedFaceIds.size * selectedPromptIds.size
+  } else {
+    calculatedTotalImages = selectedFaceIds.size * imagesPerFace
+  }
+
   const isRunning = session?.status === 'running'
   const isPaused = session?.status === 'paused'
   const isCompleted = session?.status === 'completed'
@@ -173,7 +229,7 @@ export default function DashboardPage() {
     : '0'
 
   return (
-    <div className="min-h-screen bg-[#080808] text-white p-6 max-w-5xl mx-auto space-y-6">
+    <div className="min-h-screen bg-[#080808] text-white p-6 max-w-6xl mx-auto space-y-6">
 
       {/* Header */}
       <div className="flex items-center justify-between py-4 border-b border-zinc-800">
@@ -182,209 +238,258 @@ export default function DashboardPage() {
           <p className="text-zinc-500 text-sm mt-0.5">Bulk AI image generation pipeline</p>
         </div>
         <div className="flex gap-2 flex-wrap justify-end">
-          <span className={`text-xs px-3 py-1.5 rounded-full border ${facesCount > 0 ? 'bg-green-950 border-green-800 text-green-400' : 'bg-zinc-900 border-zinc-800 text-zinc-500'}`}>
-            {facesCount} faces
+          <span className="text-xs px-3 py-1.5 rounded-full border bg-zinc-900 border-zinc-800 text-zinc-400">
+            {allFaces.length} Faces Total
           </span>
-          <span className={`text-xs px-3 py-1.5 rounded-full border ${promptsCount > 0 ? 'bg-green-950 border-green-800 text-green-400' : 'bg-zinc-900 border-zinc-800 text-zinc-500'}`}>
-            {promptsCount} prompts
-          </span>
-          <span className={`text-xs px-3 py-1.5 rounded-full border ${totalImages > 0 ? 'bg-green-950 border-green-800 text-green-400' : 'bg-zinc-900 border-zinc-800 text-zinc-500'}`}>
-            {totalImages} images queued
+          <span className="text-xs px-3 py-1.5 rounded-full border bg-zinc-900 border-zinc-800 text-zinc-400">
+            {allPrompts.length} Prompts Total
           </span>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
 
-        {/* ── LEFT COLUMN ─────────────────────────────────────────────────────── */}
-        <div className="space-y-4">
+        {/* ── LEFT COLUMN (Configuration) ────────────────────────────────────── */}
+        <div className="lg:col-span-7 space-y-6">
 
-          {/* Step 1: Load Prompts */}
-          <div className={`bg-zinc-900 border rounded-xl p-5 ${promptsCount > 0 ? 'border-green-800' : 'border-zinc-800'}`}>
-            <div className="flex items-start justify-between">
-              <div>
-                <div className="flex items-center gap-2 mb-1">
-                  {promptsCount > 0
-                    ? <CheckCircle className="h-4 w-4 text-green-400 flex-shrink-0" />
-                    : <span className="text-zinc-600 text-sm font-bold w-4">01</span>
-                  }
-                  <span className="font-semibold text-sm">Load Outfit Prompts</span>
-                </div>
-                <p className="text-zinc-500 text-xs ml-6">
-                  {promptsCount > 0
-                    ? `✅ ${promptsCount} prompts ready in Supabase`
-                    : '100 Indian GF outfits × poses → auto-loaded'
-                  }
-                </p>
+          {/* 1. Face Selection */}
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <span className="text-zinc-600 text-sm font-bold">01</span>
+                <span className="font-semibold text-sm">Select Faces</span>
               </div>
-              <button
-                onClick={handleSeedPrompts}
-                disabled={seeding || promptsCount > 0}
-                className="ml-3 flex-shrink-0 bg-green-600 hover:bg-green-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-xs font-semibold px-3 py-2 rounded-lg transition-colors"
+              <div className="flex items-center gap-3">
+                <button onClick={() => document.getElementById('faceInput')?.click()} className="text-xs text-green-400 hover:text-green-300">
+                  + Upload
+                </button>
+                <button onClick={handleSyncFromBucket} disabled={syncing} className="text-xs text-zinc-400 hover:text-white flex items-center gap-1">
+                  <RefreshCw className={`w-3 h-3 ${syncing ? 'animate-spin' : ''}`} /> Sync
+                </button>
+              </div>
+            </div>
+            
+            <input id="faceInput" type="file" multiple accept="image/*" className="hidden" onChange={(e) => e.target.files && handleFiles(e.target.files)} />
+
+            {allFaces.length === 0 ? (
+              <div className="text-center py-6 text-zinc-600 border border-dashed border-zinc-800 rounded-lg">
+                <ImageIcon2 className="h-6 w-6 mx-auto mb-2 opacity-30" />
+                <div className="text-xs">No faces found. Upload or Sync.</div>
+              </div>
+            ) : (
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <button onClick={toggleAllFaces} className="text-xs text-zinc-400 hover:text-white flex items-center gap-1">
+                    {selectedFaceIds.size === allFaces.length ? <CheckSquare className="w-4 h-4 text-green-500" /> : <Square className="w-4 h-4" />}
+                    Select All ({selectedFaceIds.size}/{allFaces.length})
+                  </button>
+                </div>
+                <div className="grid grid-cols-4 sm:grid-cols-6 gap-2 max-h-48 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-zinc-700">
+                  {allFaces.map(face => {
+                    const isSelected = selectedFaceIds.has(face.id)
+                    return (
+                      <div 
+                        key={face.id} 
+                        onClick={() => toggleFace(face.id)}
+                        className={`relative aspect-square rounded-lg overflow-hidden cursor-pointer border-2 transition-all ${isSelected ? 'border-green-500' : 'border-transparent hover:border-zinc-700'}`}
+                      >
+                        <img src={face.storage_url} alt={face.label} className="w-full h-full object-cover" />
+                        {isSelected && (
+                          <div className="absolute top-1 right-1 bg-green-500 rounded-full">
+                            <CheckCircle className="w-4 h-4 text-white" />
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+            {uploadMsg && <p className="text-xs mt-3 text-green-400">{uploadMsg}</p>}
+          </div>
+
+          {/* 2. Prompt Selection */}
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-zinc-600 text-sm font-bold">02</span>
+              <span className="font-semibold text-sm">Select Prompts</span>
+            </div>
+
+            {/* Tabs */}
+            <div className="flex bg-zinc-950 p-1 rounded-lg mb-4">
+              <button 
+                onClick={() => setPromptMode('library')}
+                className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors ${promptMode === 'library' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
               >
-                {seeding ? 'Loading...' : promptsCount > 0 ? 'Done ✓' : 'Load Prompts'}
+                Library ({allPrompts.length})
+              </button>
+              <button 
+                onClick={() => setPromptMode('custom')}
+                className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors ${promptMode === 'custom' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+              >
+                Custom
+              </button>
+              <button 
+                onClick={() => setPromptMode('random')}
+                className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors ${promptMode === 'random' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+              >
+                Random
               </button>
             </div>
-          </div>
 
-          {/* Step 2: Face Photos */}
-          <div className={`bg-zinc-900 border rounded-xl p-5 ${facesCount > 0 ? 'border-green-800' : 'border-zinc-800'}`}>
-            <div className="flex items-center gap-2 mb-1">
-              {facesCount > 0
-                ? <CheckCircle className="h-4 w-4 text-green-400" />
-                : <span className="text-zinc-600 text-sm font-bold">02</span>
-              }
-              <span className="font-semibold text-sm">Face Photos</span>
-            </div>
-            <p className="text-zinc-500 text-xs mb-3 ml-6">
-              {facesCount > 0 ? `✅ ${facesCount} faces registered` : 'Upload or sync from Supabase bucket'}
-            </p>
-
-            {/* Drag & Drop Upload Zone */}
-            <div
-              onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFiles(e.dataTransfer.files) }}
-              onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
-              onDragLeave={() => setDragOver(false)}
-              onClick={() => document.getElementById('faceInput')?.click()}
-              className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-all ${dragOver ? 'border-green-500 bg-green-950/20' : 'border-zinc-700 hover:border-zinc-500'}`}
-            >
-              <input id="faceInput" type="file" multiple accept="image/*" className="hidden"
-                onChange={(e) => e.target.files && handleFiles(e.target.files)} />
-              {uploading
-                ? <div className="text-green-400 text-sm animate-pulse">{uploadMsg}</div>
-                : <div>
-                  <Upload className="h-6 w-6 text-zinc-600 mx-auto mb-1" />
-                  <div className="text-zinc-400 text-xs">Drop face photos here or click to browse</div>
+            {/* Tab Content */}
+            {promptMode === 'library' && (
+              <div className="space-y-3">
+                <p className="text-xs text-zinc-500">Select specific prompts to generate for each selected face.</p>
+                <div className="max-h-48 overflow-y-auto space-y-2 pr-2 scrollbar-thin scrollbar-thumb-zinc-700">
+                  {allPrompts.map(prompt => {
+                    const isSelected = selectedPromptIds.has(prompt.id)
+                    return (
+                      <div 
+                        key={prompt.id} 
+                        onClick={() => togglePrompt(prompt.id)}
+                        className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${isSelected ? 'bg-green-950/20 border-green-800' : 'bg-zinc-950 border-zinc-800 hover:border-zinc-600'}`}
+                      >
+                        <div className="mt-0.5">
+                          {isSelected ? <CheckSquare className="w-4 h-4 text-green-500" /> : <Square className="w-4 h-4 text-zinc-600" />}
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold text-zinc-200">{prompt.style_name}</div>
+                          <div className="text-xs text-zinc-500 line-clamp-1">{prompt.prompt_text}</div>
+                        </div>
+                      </div>
+                    )
+                  })}
                 </div>
-              }
-            </div>
-
-            {/* Sync from Supabase */}
-            <button
-              onClick={handleSyncFromBucket}
-              disabled={syncing}
-              className="mt-2 w-full flex items-center justify-center gap-2 border border-zinc-700 hover:border-green-700 text-zinc-400 hover:text-green-400 text-xs font-medium py-2 rounded-lg transition-colors"
-            >
-              <RefreshCw className={`h-3.5 w-3.5 ${syncing ? 'animate-spin' : ''}`} />
-              {syncing ? 'Syncing...' : 'Sync from Supabase aigf bucket'}
-            </button>
-            {uploadMsg && !uploading && <p className="text-xs mt-2 text-center text-green-400">{uploadMsg}</p>}
-          </div>
-
-          {/* Step 3: Generate Images */}
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
-            <div className="flex items-center gap-2 mb-1">
-              {isCompleted
-                ? <CheckCircle className="h-4 w-4 text-green-400" />
-                : <span className="text-zinc-600 text-sm font-bold">03</span>
-              }
-              <span className="font-semibold text-sm">Generate Images</span>
-            </div>
-            <p className="text-zinc-500 text-xs mb-4 ml-6">
-              Use the slider to pick images per face, then hit Generate
-            </p>
-
-            {/* Live status ticker */}
-            {lastGenerated && (
-              <div className={`mb-3 text-xs rounded-lg px-3 py-2 flex items-center gap-2 ${generating ? 'text-green-400 bg-green-950/30 border border-green-900' : 'text-zinc-400 bg-zinc-800 border border-zinc-700'}`}>
-                {generating && <Zap className="h-3 w-3 animate-pulse flex-shrink-0" />}
-                {lastGenerated}
+                <div className="text-xs text-green-400 font-medium">{selectedPromptIds.size} prompts selected</div>
               </div>
             )}
 
-            {/* ── Slider — ALWAYS visible ────────────────────────────── */}
-            <div className="bg-zinc-800 rounded-xl p-4 mb-4">
-              <div className="flex justify-between items-center mb-3">
-                <label className="text-sm font-semibold text-zinc-200">Images per face</label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    min={1}
-                    max={promptsCount || 100}
-                    value={imagesPerFace}
-                    onChange={(e) => setImagesPerFace(Math.min(promptsCount || 100, Math.max(1, Number(e.target.value) || 1)))}
-                    className="w-16 bg-zinc-900 border border-zinc-600 rounded-md px-2 py-1 text-sm text-center text-white focus:outline-none focus:border-green-500"
-                  />
-                </div>
+            {promptMode === 'custom' && (
+              <div className="space-y-3">
+                <p className="text-xs text-zinc-500">Write your own prompt. We will generate variations based on the slider below.</p>
+                <textarea
+                  value={customPrompt}
+                  onChange={(e) => setCustomPrompt(e.target.value)}
+                  placeholder="e.g. A highly detailed portrait of a woman wearing a red sari in Paris during sunset..."
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-sm text-white focus:outline-none focus:border-green-500 min-h-[100px] resize-y"
+                />
               </div>
-              <input
-                type="range"
-                min={1}
-                max={promptsCount || 100}
-                value={imagesPerFace}
-                onChange={(e) => setImagesPerFace(Number(e.target.value))}
-                className="w-full h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-green-500"
-              />
-              <div className="flex justify-between text-xs mt-2">
-                <span className="text-zinc-500">1</span>
-                <span className="font-bold">
-                  <span className="text-green-400">{facesCount} faces</span>
-                  <span className="text-zinc-500"> × </span>
-                  <span className="text-green-400">{imagesPerFace}</span>
-                  <span className="text-zinc-500"> = </span>
-                  <span className="text-white">{totalImages} images</span>
-                </span>
-                <span className="text-zinc-500">Max {promptsCount || 100}</span>
+            )}
+
+            {promptMode === 'random' && (
+              <div className="space-y-3">
+                <p className="text-xs text-zinc-500">We will randomly pick prompts from the library based on the slider below.</p>
+              </div>
+            )}
+
+            {/* Slider for Custom and Random modes */}
+            {promptMode !== 'library' && (
+              <div className="mt-5 pt-5 border-t border-zinc-800">
+                <div className="flex justify-between items-center mb-3">
+                  <label className="text-sm font-semibold text-zinc-200">Variations per face</label>
+                  <span className="text-green-400 font-bold">{imagesPerFace}</span>
+                </div>
+                <input
+                  type="range" min={1} max={100} value={imagesPerFace}
+                  onChange={(e) => setImagesPerFace(Number(e.target.value))}
+                  className="w-full h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-green-500"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* 3. Model Selection & Generate */}
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-zinc-600 text-sm font-bold">03</span>
+              <span className="font-semibold text-sm">Review & Generate</span>
+            </div>
+
+            <div className="flex gap-4 mb-5">
+              <div 
+                onClick={() => setModel('imagen')}
+                className={`flex-1 p-3 rounded-lg border cursor-pointer transition-colors ${model === 'imagen' ? 'bg-green-950/20 border-green-500' : 'bg-zinc-950 border-zinc-800 hover:border-zinc-700'}`}
+              >
+                <div className="text-sm font-semibold text-white mb-1 flex items-center justify-between">
+                  Imagen 4.0 {model === 'imagen' && <CheckCircle className="w-4 h-4 text-green-500" />}
+                </div>
+                <div className="text-xs text-zinc-500">Premium quality (2-Stage)</div>
+              </div>
+              <div 
+                onClick={() => setModel('gemini')}
+                className={`flex-1 p-3 rounded-lg border cursor-pointer transition-colors ${model === 'gemini' ? 'bg-green-950/20 border-green-500' : 'bg-zinc-950 border-zinc-800 hover:border-zinc-700'}`}
+              >
+                <div className="text-sm font-semibold text-white mb-1 flex items-center justify-between">
+                  Gemini 2.5 Flash {model === 'gemini' && <CheckCircle className="w-4 h-4 text-green-500" />}
+                </div>
+                <div className="text-xs text-zinc-500">Fast & Free</div>
               </div>
             </div>
 
-            {/* ── Action buttons — based on current state ────────────── */}
-            <div className="space-y-2">
+            <div className="bg-zinc-950 rounded-lg p-3 mb-5 border border-zinc-800 text-sm">
+              <div className="flex justify-between mb-1">
+                <span className="text-zinc-500">Faces selected:</span>
+                <span className="text-white font-medium">{selectedFaceIds.size}</span>
+              </div>
+              <div className="flex justify-between mb-1">
+                <span className="text-zinc-500">Prompts/Variations:</span>
+                <span className="text-white font-medium">{promptMode === 'library' ? selectedPromptIds.size : imagesPerFace}</span>
+              </div>
+              <div className="flex justify-between pt-2 mt-2 border-t border-zinc-800">
+                <span className="text-zinc-400 font-semibold">Total to Generate:</span>
+                <span className="text-green-400 font-bold">{calculatedTotalImages} Images</span>
+              </div>
+            </div>
 
-              {/* No session OR completed → show green START */}
+            {/* Action buttons */}
+            <div className="space-y-2">
               {(!session || isCompleted) && (
                 <button
-                  id="btn-generate"
-                  onClick={handleStart}
-                  disabled={starting || !facesCount || !promptsCount}
-                  className="w-full flex items-center justify-center gap-2 bg-green-600 hover:bg-green-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white font-bold py-3 rounded-xl transition-colors shadow-lg shadow-green-900/20 text-sm"
+                  id="btn-generate" onClick={handleStart}
+                  disabled={starting || calculatedTotalImages === 0}
+                  className="w-full flex items-center justify-center gap-2 bg-green-600 hover:bg-green-500 disabled:bg-zinc-800 disabled:text-zinc-600 text-white font-bold py-3 rounded-xl transition-colors shadow-lg shadow-green-900/20 text-sm"
                 >
-                  <Play className="h-4 w-4" />
-                  {starting ? 'Starting...' : `▶ Generate ${totalImages} Images`}
+                  {starting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                  {starting ? 'Starting...' : `Generate ${calculatedTotalImages} Images`}
                 </button>
               )}
 
-              {/* Running or generating → show STOP */}
               {(isRunning || generating) && !isCompleted && (
                 <button
-                  id="btn-stop"
-                  onClick={handlePause}
+                  id="btn-stop" onClick={handlePause}
                   className="w-full flex items-center justify-center gap-2 bg-yellow-600 hover:bg-yellow-500 text-white font-bold py-3 rounded-xl transition-colors text-sm"
                 >
-                  <Pause className="h-4 w-4" /> ⏸ Stop Generation
+                  <Pause className="h-4 w-4" /> Stop Generation
                 </button>
               )}
 
-              {/* Paused → show RESUME */}
               {isPaused && !generating && (
                 <button
-                  id="btn-resume"
-                  onClick={handleResume}
+                  id="btn-resume" onClick={handleResume}
                   className="w-full flex items-center justify-center gap-2 bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded-xl transition-colors text-sm"
                 >
-                  <Play className="h-4 w-4" /> ▶ Resume Generation
+                  <Play className="h-4 w-4" /> Resume Generation
                 </button>
               )}
 
-              {/* New Batch — visible whenever a session exists */}
               {session && (
                 <button
-                  id="btn-new-batch"
-                  onClick={handleStart}
-                  disabled={starting || generating}
-                  className="w-full flex items-center justify-center gap-2 bg-zinc-700 hover:bg-zinc-600 disabled:opacity-40 text-white text-sm font-semibold py-2.5 rounded-xl transition-colors border border-zinc-600"
+                  id="btn-new-batch" onClick={handleStart}
+                  disabled={starting || generating || calculatedTotalImages === 0}
+                  className="w-full flex items-center justify-center gap-2 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-white text-sm font-semibold py-2.5 rounded-xl transition-colors border border-zinc-700"
                 >
                   <RefreshCw className="h-3.5 w-3.5" />
-                  {starting ? 'Starting...' : `🔄 New Batch — ${totalImages} images`}
+                  New Batch — {calculatedTotalImages} images
                 </button>
               )}
-
             </div>
+
           </div>
         </div>
 
-        {/* ── RIGHT COLUMN ────────────────────────────────────────────────────── */}
-        <div className="space-y-4">
+        {/* ── RIGHT COLUMN (Progress & Results) ──────────────────────────────── */}
+        <div className="lg:col-span-5 space-y-6">
 
           {/* Live Progress */}
           <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
@@ -394,7 +499,7 @@ export default function DashboardPage() {
               <div className="text-center py-10 text-zinc-600">
                 <Clock className="h-10 w-10 mx-auto mb-3 opacity-30" />
                 <div className="text-sm">Waiting to start...</div>
-                <div className="text-xs mt-1 text-zinc-700">Set your slider and click Generate</div>
+                <div className="text-xs mt-1 text-zinc-700">Configure your batch on the left</div>
               </div>
             ) : (
               <div className="space-y-5">
@@ -436,8 +541,11 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                {stats?.eta_minutes && generating && (
-                  <p className="text-center text-xs text-zinc-500">⏱ ~{stats.eta_minutes} minutes remaining</p>
+                {lastGenerated && (
+                  <div className={`mt-4 text-xs rounded-lg px-3 py-2 flex items-center gap-2 ${generating ? 'text-green-400 bg-green-950/30 border border-green-900' : 'text-zinc-400 bg-zinc-800 border border-zinc-700'}`}>
+                    {generating && <Zap className="h-3 w-3 animate-pulse flex-shrink-0" />}
+                    <span className="truncate">{lastGenerated}</span>
+                  </div>
                 )}
               </div>
             )}
@@ -446,18 +554,18 @@ export default function DashboardPage() {
           {/* Generated Images */}
           <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
             <div className="flex items-center justify-between mb-3">
-              <h2 className="font-semibold text-sm">Generated Images</h2>
-              <a href="/gallery" className="text-xs text-green-400 hover:underline">View all →</a>
+              <h2 className="font-semibold text-sm">Latest Output</h2>
+              <a href="/gallery" className="text-xs text-green-400 hover:underline">Gallery →</a>
             </div>
             {latestImages.length === 0 ? (
-              <div className="text-center py-6 text-zinc-600">
+              <div className="text-center py-6 text-zinc-600 border border-dashed border-zinc-800 rounded-lg">
                 <ImageIcon className="h-8 w-8 mx-auto mb-2 opacity-30" />
                 <div className="text-xs">Images appear here as they generate</div>
               </div>
             ) : (
-              <div className="grid grid-cols-4 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 {latestImages.map(img => (
-                  <div key={img.id} className="aspect-square rounded-lg overflow-hidden bg-zinc-800">
+                  <div key={img.id} className="aspect-square rounded-lg overflow-hidden bg-zinc-800 relative group">
                     <img src={img.cloudinary_url} alt="" className="w-full h-full object-cover" loading="lazy" />
                   </div>
                 ))}

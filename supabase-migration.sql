@@ -36,7 +36,8 @@ CREATE TABLE batch_sessions (
   completed_jobs INT NOT NULL DEFAULT 0,
   failed_jobs    INT NOT NULL DEFAULT 0,
   started_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  status         batch_status NOT NULL DEFAULT 'running'
+  status         batch_status NOT NULL DEFAULT 'running',
+  model          TEXT NOT NULL DEFAULT 'imagen'
 );
 
 CREATE TABLE generation_jobs (
