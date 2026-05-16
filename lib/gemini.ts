@@ -4,7 +4,7 @@ import { GoogleGenerativeAI, Part } from '@google/generative-ai'
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!)
 
 // Model that supports image input + image generation output
-const MODEL = 'gemini-2.0-flash-exp-image-generation'
+const MODEL = 'gemini-2.0-flash-preview-image-generation'
 
 // ─── Core Generate Function ───────────────────────────────────────────────────
 
